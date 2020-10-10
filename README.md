@@ -1,4 +1,4 @@
-# Uuids
+# uuids
 Uuid generator C++ header-only library.
 
 ## Useful links:
