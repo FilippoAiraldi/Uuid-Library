@@ -7,5 +7,6 @@
 
 #include <cstdint>
 #include <stdexcept>
+#include <string>
 
 #endif // UUIDS_COMMON_HPP

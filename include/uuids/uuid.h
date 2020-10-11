@@ -6,9 +6,7 @@
 #endif // defined(_MSC_VER) && (_MSC_VER >= 1200)
 
 #include "common.h"
-#include "bits.h"
 #include "generator.h"
-#include <string>
 
 /* --------------------------------------------------------------------------
 Uuid layout:
@@ -36,7 +34,13 @@ namespace uuids
         static uuid create()
         {
             uuid d;
-            d._generate();
+            d._generate(_default_generator);
+            return d;
+        }
+        static uuid create(generator_base &generator)
+        {
+            uuid d;
+            d._generate(generator);
             return d;
         }
 
@@ -45,85 +49,90 @@ namespace uuids
         std::string to_string() const { return _to_string(); }
 
         uuid &operator=(const uuid &other) { return _copy_bytes(other); }
-        bool operator==(const uuid &other) { return _compare_bytes(*this, other); }
-        bool operator!=(const uuid &other) { return !(*this == other); }
+        bool operator==(const uuid &other) { return compare(*this, other) == 0; }
+        bool operator!=(const uuid &other) { return compare(*this, other) != 0; }
+        bool operator<(const uuid &other) { return compare(*this, other) < 0; }
+        bool operator>(const uuid &other) { return compare(*this, other) > 0; }
+        bool operator<=(const uuid &other) { return compare(*this, other) <= 0; }
+        bool operator>=(const uuid &other) { return compare(*this, other) >= 0; }
 
     private:
         uuid() = default;
         uuid(const uuid &) = default;
 
-        void _generate()
+        void _generate(generator_base &gntr)
         {
-            _set_variant();
-            _set_version();
-            _set_timestamp();
-            _set_clock_sequence();
+            // set node before clock, because node might reset the node
+            _set_node(gntr);
+            _set_time_and_version(gntr);
+            _set_clock_and_variant(gntr);
         }
 
-        void _set_variant()
+        void _set_time_and_version(generator_base &gntr)
         {
-            // sets 2 msbs of the 8-th bytes
-            bits::set_bit<uint8_t, 7>(_clock_seq_hi_and_reserved);   // msb0 = 1
-            bits::clear_bit<uint8_t, 6>(_clock_seq_hi_and_reserved); // msb1 = 0
+            // generate timestamp (64 bits, first 4 msbs to be discarded) and version
+            uint64_t stamp = gntr.generate_timestamp();
+            uint16_t version = gntr.get_version();
+
+            // set time_low as stamp's bits 0-31
+            _time_low = static_cast<uint32_t>(stamp);
+
+            // set time_mid as stamp's bits 32-47
+            _time_mid = static_cast<uint16_t>(stamp >> 32);
+
+            // set time_hi_and_version bits 0-11 as stamp's bits 48-59
+            _time_hi_and_version = (static_cast<uint16_t>(stamp >> 48) & ~version_mask);
+
+            // set time_hi_and_version bits 12-15 as version
+            _time_hi_and_version += (version & version_mask);
         }
 
-        void _set_version()
+        void _set_clock_and_variant(generator_base &gntr)
         {
-            // sets 4 msbs of the 6-th bytes
-            bits::clear_bit<uint16_t, 15>(_time_hi_and_version); // msb0 = 0
-            bits::clear_bit<uint16_t, 14>(_time_hi_and_version); // msb1 = 0
-            bits::clear_bit<uint16_t, 13>(_time_hi_and_version); // msb2 = 0
-            bits::set_bit<uint16_t, 12>(_time_hi_and_version);   // msb3 = 1
+            // generate clock sequence (16 bits, first 2 msbs to be discarded)
+            uint16_t clock = gntr.generate_clock_sequence();
+            uint8_t variant = gntr.get_variant();
+
+            // set clock_seq_low as clock's bits 0-7
+            _clock_seq_low = static_cast<uint8_t>(clock);
+
+            // set clock_seq_hi_and_reserved bits 0-5 as clock's bits 8-13
+            _clock_seq_hi_and_reserved = (static_cast<uint8_t>(clock >> 8) & ~variant_mask);
+
+            // set clock_seq_hi_and_reserved bits 14-15 as variant
+            _clock_seq_hi_and_reserved += (variant & variant_mask);
         }
 
-        void _set_timestamp()
+        void _set_node(generator_base &gntr)
         {
-            // sets the remaining 60 bits from bytes 0 to 7 (4 are taken by the uuid version)
-            // get count of 100ns intervals from 15/10/1582
-            uint64_t cnt = generator::generate_timestamp();
+            // get node (48-bit MAC address if available; otherwise random)
+            uint8_t *node = gntr.get_node();
 
-            for (uint8_t i = 0; i < 12; ++i)
-            {
-                bool b = bits::get_bit(cnt, i);
-                bits::set_bit_to_value(_time_hi_and_version, i, b);
-            }
-
-            for (uint8_t i = 0; i < 16; ++i)
-            {
-                bool b = bits::get_bit(cnt, i + 12);
-                bits::set_bit_to_value(_time_mid, i, b);
-            }
-
-            for (uint8_t i = 0; i < 32; ++i)
-            {
-                bool b = bits::get_bit(cnt, i + 28);
-                bits::set_bit_to_value(_time_low, i, b);
-            }
+            // copy each node
+            for (int i = 0; i < 6; ++i)
+                _node[i] = node[i];
         }
 
-        void _set_clock_sequence()
+#define CHECK(f1, f2) \
+    if (f1 != f2)     \
+        return f1 < f2 ? -1 : 1;
+        // compare two UUID's "lexically" and return
+        // -1   u1 is lexically before u2
+        //  0   u1 is equal to u2
+        //  1   u1 is lexically after u2
+        // Note that lexical ordering is not temporal ordering!
+        static int compare(const uuid &u1, const uuid &u2)
         {
-            bool *rnd_bits = generator::generate_clock_sequence();
-
-            bits::set_bit_to_value<uint8_t, 0>(_clock_seq_low, rnd_bits[0]);
-            bits::set_bit_to_value<uint8_t, 1>(_clock_seq_low, rnd_bits[1]);
-            bits::set_bit_to_value<uint8_t, 2>(_clock_seq_low, rnd_bits[2]);
-            bits::set_bit_to_value<uint8_t, 3>(_clock_seq_low, rnd_bits[3]);
-            bits::set_bit_to_value<uint8_t, 4>(_clock_seq_low, rnd_bits[4]);
-            bits::set_bit_to_value<uint8_t, 5>(_clock_seq_low, rnd_bits[5]);
-            bits::set_bit_to_value<uint8_t, 6>(_clock_seq_low, rnd_bits[6]);
-            bits::set_bit_to_value<uint8_t, 7>(_clock_seq_low, rnd_bits[7]);
-
-            bits::set_bit_to_value<uint8_t, 0>(_clock_seq_hi_and_reserved, rnd_bits[8]);
-            bits::set_bit_to_value<uint8_t, 1>(_clock_seq_hi_and_reserved, rnd_bits[9]);
-            bits::set_bit_to_value<uint8_t, 2>(_clock_seq_hi_and_reserved, rnd_bits[10]);
-            bits::set_bit_to_value<uint8_t, 3>(_clock_seq_hi_and_reserved, rnd_bits[11]);
-
-            bits::set_bit_to_value<uint8_t, 4>(_clock_seq_hi_and_reserved, rnd_bits[12]);
-            bits::set_bit_to_value<uint8_t, 5>(_clock_seq_hi_and_reserved, rnd_bits[13]);
-
-            delete rnd_bits;
+            CHECK(u1._time_low, u2._time_low);
+            CHECK(u1._time_mid, u2._time_mid);
+            CHECK(u1._time_hi_and_version, u2._time_hi_and_version);
+            CHECK(u1._clock_seq_hi_and_reserved, u2._clock_seq_hi_and_reserved);
+            CHECK(u1._clock_seq_low, u2._clock_seq_low);
+            for (int i = 0; i < 6; ++i)
+                CHECK(u1._node[i], u2._node[i]);
+            return 0;
         }
+#undef CHECK
 
     private:
         uint32_t _time_low{};                 // 0-3
@@ -131,82 +140,40 @@ namespace uuids
         uint16_t _time_hi_and_version{};      // 6-7
         uint8_t _clock_seq_hi_and_reserved{}; // 8
         uint8_t _clock_seq_low{};             // 9
-        uint32_t _node_1{};                   // 10-13
-        uint16_t _node_2{};                   // 14-15
+        uint8_t _node[6];                     // 10-15
 
+        inline static rnd_generator _default_generator = rnd_generator();
+        inline static const constexpr uint16_t version_mask = 0xf000; // 1111 0000 0000 0000
+        inline static const constexpr uint8_t variant_mask = 0xc0;    // 1100 0000
+
+    private:
         uuid &_copy_bytes(const uuid &other)
         {
-            // no move constructor or assignment
-            // since fields are of very simple types
+            // no move constructor or assignment since fields are of very simple types
             _time_low = other._time_low;
             _time_mid = other._time_mid;
             _time_hi_and_version = other._time_hi_and_version;
             _clock_seq_hi_and_reserved = other._clock_seq_hi_and_reserved;
             _clock_seq_low = other._clock_seq_low;
-            _node_1 = other._node_1;
-            _node_2 = other._node_2;
+            for (int i = 0; i < 6; ++i)
+                _node[i] = other._node[i];
             return *this;
         }
 
-        bool _compare_bytes(const uuid &lhs, const uuid &rhs)
-        {
-            return lhs._time_low == rhs._time_low &&
-                   lhs._time_mid == rhs._time_mid &&
-                   lhs._time_hi_and_version == rhs._time_hi_and_version &&
-                   lhs._clock_seq_hi_and_reserved == rhs._clock_seq_hi_and_reserved &&
-                   lhs._clock_seq_low == rhs._clock_seq_low &&
-                   lhs._node_1 == rhs._node_1 &&
-                   lhs._node_2 == rhs._node_2;
-        }
-
-    private:
         std::string _to_string() const
         {
-            std::string s;
+            char buffer[36 + 1];
+            sprintf(buffer, "%.8x-%.4x-%.4x-%.2x%.2x-%.4x%.4x%.4x",
+                    _time_low,
+                    _time_mid,
+                    _time_hi_and_version,
+                    _clock_seq_hi_and_reserved,
+                    _clock_seq_low,
+                    _node[0],
+                    _node[1],
+                    _node[2]);
 
-            s.append(_byte_to_hexa_str(bits::get_byte<uint32_t, 3>(_time_low)));
-            s.append(_byte_to_hexa_str(bits::get_byte<uint32_t, 2>(_time_low)));
-            s.append(_byte_to_hexa_str(bits::get_byte<uint32_t, 1>(_time_low)));
-            s.append(_byte_to_hexa_str(bits::get_byte<uint32_t, 0>(_time_low)));
-            s.push_back('-');
-
-            s.append(_byte_to_hexa_str(bits::get_byte<uint16_t, 1>(_time_mid)));
-            s.append(_byte_to_hexa_str(bits::get_byte<uint16_t, 0>(_time_mid)));
-            s.push_back('-');
-
-            s.append(_byte_to_hexa_str(bits::get_byte<uint16_t, 1>(_time_hi_and_version)));
-            s.append(_byte_to_hexa_str(bits::get_byte<uint16_t, 0>(_time_hi_and_version)));
-            s.push_back('-');
-
-            s.append(_byte_to_hexa_str(bits::get_byte<uint8_t, 0>(_clock_seq_hi_and_reserved)));
-            s.append(_byte_to_hexa_str(bits::get_byte<uint8_t, 0>(_clock_seq_low)));
-            s.push_back('-');
-
-            s.append(_byte_to_hexa_str(bits::get_byte<uint32_t, 3>(_node_1)));
-            s.append(_byte_to_hexa_str(bits::get_byte<uint32_t, 2>(_node_1)));
-            s.append(_byte_to_hexa_str(bits::get_byte<uint32_t, 1>(_node_1)));
-            s.append(_byte_to_hexa_str(bits::get_byte<uint32_t, 0>(_node_1)));
-            s.append(_byte_to_hexa_str(bits::get_byte<uint16_t, 1>(_node_2)));
-            s.append(_byte_to_hexa_str(bits::get_byte<uint16_t, 0>(_node_2)));
-            return s;
-        }
-
-        static std::string _byte_to_hexa_str(uint8_t n)
-        {
-            uint8_t lsb_4_bits = n & 15; // 15 = ~(1 << 4)
-            uint8_t msb_4_bits = (n >> 4) & 15;
-
-            std::string s;
-            s.push_back(_4_bits_to_hexa_char(msb_4_bits));
-            s.push_back(_4_bits_to_hexa_char(lsb_4_bits));
-            return s;
-        }
-
-        static char _4_bits_to_hexa_char(uint8_t n)
-        {
-            if (n < 10)
-                return (char)n + '0';
-            return (char)(n - 10) + 'a';
+            return std::string(buffer);
         }
     };
 
