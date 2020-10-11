@@ -33,3 +33,6 @@
 
 # output folder
 /bin
+
+# vscode settings
+/.vscode/settings.json
