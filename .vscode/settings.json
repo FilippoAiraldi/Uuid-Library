@@ -69,7 +69,9 @@
         "thread": "cpp",
         "typeinfo": "cpp",
         "*.ipp": "cpp",
-        "bitset": "cpp"
+        "bitset": "cpp",
+        "unordered_set": "cpp",
+        "map": "cpp"
     },
     "editor.formatOnSave": true,
     "editor.formatOnType": true,

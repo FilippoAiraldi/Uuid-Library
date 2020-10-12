@@ -32,7 +32,7 @@
 *.app
 
 # output folder
-/bin
+/bin/*.*
 
 # vscode settings
 /.vscode/settings.json

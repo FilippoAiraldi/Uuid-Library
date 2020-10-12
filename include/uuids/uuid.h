@@ -55,18 +55,28 @@ namespace uuids
         uuid clone() { return uuid(*this); }
         std::string to_string() const { return _to_string(); }
 
-        uuid &operator=(const uuid &other) { return _copy_bytes(other); }
-        bool operator==(const uuid &other) { return compare(*this, other) == 0; }
-        bool operator!=(const uuid &other) { return compare(*this, other) != 0; }
-        bool operator<(const uuid &other) { return compare(*this, other) < 0; }
-        bool operator>(const uuid &other) { return compare(*this, other) > 0; }
-        bool operator<=(const uuid &other) { return compare(*this, other) <= 0; }
-        bool operator>=(const uuid &other) { return compare(*this, other) >= 0; }
+#define CHECK(f1, f2) \
+    if (f1 != f2)     \
+        return f1 < f2 ? -1 : 1;
+        // compare two UUID's "lexically" and return
+        // -1   u1 is lexically before u2
+        //  0   u1 is equal to u2
+        //  1   u1 is lexically after u2
+        // Note that lexical ordering is not temporal ordering!
+        static int compare(const uuid &u1, const uuid &u2)
+        {
+            CHECK(u1._time_low, u2._time_low);
+            CHECK(u1._time_mid, u2._time_mid);
+            CHECK(u1._time_hi_and_version, u2._time_hi_and_version);
+            CHECK(u1._clock_seq_hi_and_reserved, u2._clock_seq_hi_and_reserved);
+            CHECK(u1._clock_seq_low, u2._clock_seq_low);
+            for (int i = 0; i < 6; ++i)
+                CHECK(u1._node[i], u2._node[i]);
+            return 0;
+        }
+#undef CHECK
 
     private:
-        uuid() = default;
-        uuid(const uuid &) = default;
-
         void _generate(generator_base &gntr)
         {
             // set node before clock, because node might reset the node
@@ -119,27 +129,6 @@ namespace uuids
             for (int i = 0; i < 6; ++i)
                 _node[i] = node[i];
         }
-
-#define CHECK(f1, f2) \
-    if (f1 != f2)     \
-        return f1 < f2 ? -1 : 1;
-        // compare two UUID's "lexically" and return
-        // -1   u1 is lexically before u2
-        //  0   u1 is equal to u2
-        //  1   u1 is lexically after u2
-        // Note that lexical ordering is not temporal ordering!
-        static int compare(const uuid &u1, const uuid &u2)
-        {
-            CHECK(u1._time_low, u2._time_low);
-            CHECK(u1._time_mid, u2._time_mid);
-            CHECK(u1._time_hi_and_version, u2._time_hi_and_version);
-            CHECK(u1._clock_seq_hi_and_reserved, u2._clock_seq_hi_and_reserved);
-            CHECK(u1._clock_seq_low, u2._clock_seq_low);
-            for (int i = 0; i < 6; ++i)
-                CHECK(u1._node[i], u2._node[i]);
-            return 0;
-        }
-#undef CHECK
 
     private:
         uint32_t _time_low{};                 // 0-3
@@ -194,12 +183,33 @@ namespace uuids
         }
     };
 
-    std::ostream &operator<<(std::ostream &os, const uuid &d)
+} // namespace uuids
+
+namespace std
+{
+    typedef uuids::uuid id;
+
+    template <>
+    struct hash<id>
+    {
+        std::size_t operator()(id const &d) const noexcept
+        {
+            return hash<string>{}(d.to_string());
+        }
+    };
+
+    bool operator==(const id &lhs, const id &rhs) { return id::compare(lhs, rhs) == 0; }
+    bool operator!=(const id &lhs, const id &rhs) { return id::compare(lhs, rhs) != 0; }
+    bool operator<(const id &lhs, const id &rhs) { return id::compare(lhs, rhs) < 0; }
+    bool operator>(const id &lhs, const id &rhs) { return id::compare(lhs, rhs) > 0; }
+    bool operator<=(const id &lhs, const id &rhs) { return id::compare(lhs, rhs) <= 0; }
+    bool operator>=(const id &lhs, const id &rhs) { return id::compare(lhs, rhs) >= 0; }
+
+    ostream &operator<<(ostream &os, const id &d)
     {
         os << d.to_string();
         return os;
     }
-
-} // namespace uuids
+} // namespace std
 
 #endif // UUIDS_UUID_HPP
