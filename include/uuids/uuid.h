@@ -5,8 +5,15 @@
 #pragma once
 #endif // defined(_MSC_VER) && (_MSC_VER >= 1200)
 
-#include "common.h"
-#include "generator.h"
+#if defined(RND_UUIDS)
+#include "generators/rnd_generator.h"
+#elif defined(TIME_BASED_UUIDS)
+#include "generators/time_based_generator.h"
+#else
+#include "generators/simple_rnd_generator.h"
+#endif
+
+#include <string>
 
 /* --------------------------------------------------------------------------
 Uuid layout:
@@ -142,9 +149,16 @@ namespace uuids
         uint8_t _clock_seq_low{};             // 9
         uint8_t _node[6];                     // 10-15
 
-        inline static rnd_generator _default_generator = rnd_generator();
         inline static const constexpr uint16_t version_mask = 0xf000; // 1111 0000 0000 0000
         inline static const constexpr uint8_t variant_mask = 0xc0;    // 1100 0000
+
+#if defined(RND_UUIDS)
+        inline static rnd_generator _default_generator = rnd_generator();
+#elif defined(TIME_BASED_UUIDS)
+        inline static time_based_generator _default_generator = time_based_generator();
+#else
+        inline static simple_rnd_generator _default_generator = simple_rnd_generator();
+#endif
 
     private:
         uuid &_copy_bytes(const uuid &other)
@@ -163,7 +177,7 @@ namespace uuids
         std::string _to_string() const
         {
             char buffer[36 + 1];
-            sprintf(buffer, "%.8x-%.4x-%.4x-%.2x%.2x-%.4x%.4x%.4x",
+            sprintf(buffer, "%.8x-%.4x-%.4x-%.2x%.2x-%.2x%.2x%.2x%.2x%.2x%.2x",
                     _time_low,
                     _time_mid,
                     _time_hi_and_version,
@@ -171,7 +185,10 @@ namespace uuids
                     _clock_seq_low,
                     _node[0],
                     _node[1],
-                    _node[2]);
+                    _node[2],
+                    _node[3],
+                    _node[4],
+                    _node[5]);
 
             return std::string(buffer);
         }
